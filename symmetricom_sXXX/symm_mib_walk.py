@@ -3,10 +3,17 @@
 from pysnmp.hlapi import *
 from SYMM_SMI_MIB import lookup_symm_mib
 import dateutil.parser
+import time
+
+from insert_influxdb import setup_db
+from insert_influxdb import insert_db
 
 target_server = "192.168.101.231"
 oid_iso = "iso.3.6.1.4.1.9070"
 oid_num = "1.3.6.1.4.1.9070"
+metrics_server = "129.213.255.36"
+metrics_port = 58086
+interval_s = 71
 
 #
 # full list of MIB variables we get -- we don't use all of them
@@ -79,6 +86,8 @@ def get_symm_vars(target_host):
                             continue
                         if varname == 'symm.ntpSysVersion':
                             continue
+                        if varname == 'symm.ntpSysPktsReceived':
+                            continue
                         if varname == 'symm.tymingVersion':
                             continue
                         if varname == 'symm.tymingFlyPeriod':
@@ -98,13 +107,13 @@ def get_symm_vars(target_host):
     return symm_vars
 
 INT_VARS = ( 
+    # 00, 01, 20, 11 (leap_warning)
     'symm.ntpSysLeap',
     'symm.ntpSysStratum',
     'symm.ntpSysPrecision',
     'symm.ntpSysPoll',
     'symm.ntpSysPeer',
     'symm.ntpSysNotrust',
-    'symm.ntpSysPktsReceived',
     'symm.ntpSysMode',
     'symm.tymingSource',
     'symm.gpsUTCOffset'
@@ -131,6 +140,7 @@ def symm_to_utc_iso(s):
 
 def parse_symm_vars(symm_vars):
     p_symm_vars = { }
+    p_symm_ts = None
     for key in symm_vars.keys():
         if key in INT_VARS:
             #print("parse_symm_vars: var=" + key + ", value='" + symm_vars[key] + "': INT PARSE")
@@ -158,6 +168,7 @@ def parse_symm_vars(symm_vars):
         #symm.ntpSysClock(1.3.6.1.4.1.9070.1.2.3.1.5.1.1.13.0) = Tue Jul  7 01:13:50 2020
         if key == 'symm.ntpSysClock':
             p_symm_vars['sym.ntpSysClock'] = symm_to_utc_iso(symm_vars[key])
+            p_symm_ts = p_symm_vars['sym.ntpSysClock']
             continue
         #symm.tymingStatus(1.3.6.1.4.1.9070.1.2.3.1.5.1.2.1.0) = Good
         if key == 'symm.tymingStatus':
@@ -166,6 +177,7 @@ def parse_symm_vars(symm_vars):
         #symm.tymingTime(1.3.6.1.4.1.9070.1.2.3.1.5.1.2.3.0) = Tue Jul  7 01:13:50 2020
         if key == 'symm.tymingTime':
             p_symm_vars['sym.tymingTime_s'] = symm_to_utc_iso(symm_vars[key])
+            p_symm_ts = p_symm_vars['sym.tymingTime_s']
             continue
         #symm.gpsPosition(1.3.6.1.4.1.9070.1.2.3.1.5.1.3.1.0) = 1 47 34 0 534 -1 122 7 42 65 188
         if key == 'symm.gpsPosition':
@@ -205,18 +217,27 @@ def parse_symm_vars(symm_vars):
         if key == 'symm.gpsSatlist':
             p_values = symm_vars[key].split(',')
             satellites = int(p_values[0])
-            p_symm_vars['symm.gpsSatList.satellites'] = satellites
+            satellites_C = 0
             #print("satellites = " + str(satellites))
-            p_symm_vars['symm.gpsSatList.satellite'] = { }
+            p_symm_vars['symm.gpsSatList.satellite_C'] = { }
+            p_symm_vars['symm.gpsSatList.satellite_TC'] = { }
             for i in range(0, satellites - 1):
                 sat_number = int(p_values[1 + (i * 3) + 0])
                 sat_dbW = int(p_values[1 + (i * 3) + 1])
                 sat_status = p_values[1 + (i * 3) + 2]
                 #print("sat " + str(sat_number) + ": dbW=" + str(sat_dbW) + ", status=" + sat_status)
-                p_symm_vars['symm.gpsSatList.satellite'][sat_number] = { }
-                p_symm_vars['symm.gpsSatList.satellite'][sat_number]['sat_number'] = sat_number
-                p_symm_vars['symm.gpsSatList.satellite'][sat_number]['sat_dbW'] = sat_dbW
-                p_symm_vars['symm.gpsSatList.satellite'][sat_number]['sat_status'] = sat_status
+                if sat_status == 'C':
+                    p_symm_vars['symm.gpsSatList.satellite_C'][sat_number] = { }
+                    p_symm_vars['symm.gpsSatList.satellite_C'][sat_number]['sat_svn'] = "SV_" + str(sat_number)
+                    p_symm_vars['symm.gpsSatList.satellite_C'][sat_number]['sat_dbW'] = sat_dbW
+                    p_symm_vars['symm.gpsSatList.satellite_C'][sat_number]['sat_status'] = sat_status
+                    satellites_C = satellites_C + 1
+                p_symm_vars['symm.gpsSatList.satellite_TC'][sat_number] = { }
+                p_symm_vars['symm.gpsSatList.satellite_TC'][sat_number]['sat_svn'] = "SV_" + str(sat_number)
+                p_symm_vars['symm.gpsSatList.satellite_TC'][sat_number]['sat_dbW'] = sat_dbW
+                p_symm_vars['symm.gpsSatList.satellite_TC'][sat_number]['sat_status'] = sat_status
+            p_symm_vars['symm.gpsSatList.satellites_C'] = satellites_C
+            p_symm_vars['symm.gpsSatList.satellites_TC'] = satellites
         #symm.gpsMode(1.3.6.1.4.1.9070.1.2.3.1.5.1.3.5.0) = Receiver Mode: Survey
         if key == 'symm.gpsMode':
             p_symm_vars[key] = symm_vars[key].replace('Receiver Mode: ', '')
@@ -225,9 +246,19 @@ def parse_symm_vars(symm_vars):
         if key == 'symm.etcAlarmString':
             p_symm_vars[key] = symm_vars[key]
             continue
-    return p_symm_vars
+    return (p_symm_vars, p_symm_ts)
 
-symm_vars = get_symm_vars(target_server)
-print("symm_vars = " + str(symm_vars))
-parsed_symm_vars = parse_symm_vars(symm_vars)
-print("parsed_symm_vars = " + str(parsed_symm_vars))
+def main():
+    db = setup_db(metrics_server, metrics_port)
+    while True:
+        print("=================================================")
+        symm_vars = get_symm_vars(target_server)
+        print("symm_vars = " + str(symm_vars))
+        (p_symm_vars, p_symm_ts) = parse_symm_vars(symm_vars)
+        print("p_symm_vars = " + str(p_symm_vars))
+        print("p_symm_ts = " + str(p_symm_ts))
+        # emit_metric(p_symm_ts, p_symm_vars)
+        insert_db(db, p_symm_vars, p_symm_ts)
+        time.sleep(interval_s)
+
+main()
