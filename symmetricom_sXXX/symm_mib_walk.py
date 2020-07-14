@@ -13,7 +13,9 @@ oid_iso = "iso.3.6.1.4.1.9070"
 oid_num = "1.3.6.1.4.1.9070"
 metrics_server = "129.213.255.36"
 metrics_port = 58086
-interval_s = 71
+interval_s = 21
+lat_fudge = -120
+long_fudge = +47.30
 
 #
 # full list of MIB variables we get -- we don't use all of them
@@ -90,8 +92,8 @@ def get_symm_vars(target_host):
                             continue
                         if varname == 'symm.tymingVersion':
                             continue
-                        if varname == 'symm.tymingFlyPeriod':
-                            continue
+                        #if varname == 'symm.tymingFlyPeriod':
+                        #    continue
                         if varname == 'symm.etcVersion':
                             continue
                         if varname == 'symm.etcSerialNbr':
@@ -116,6 +118,7 @@ INT_VARS = (
     'symm.ntpSysNotrust',
     'symm.ntpSysMode',
     'symm.tymingSource',
+    'symm.tymingFlyPeriod',
     'symm.gpsUTCOffset'
 )
 FLOAT_VARS = (
@@ -208,6 +211,8 @@ def parse_symm_vars(symm_vars):
             p_symm_vars['symm.gpsPosition.elevation'] = float(elevation)
             p_symm_vars['symm.gpsPosition.latitude_f'] = dmg_to_float(float(lat_deg), float(lat_min), float(lat_sec), lat_sign)
             p_symm_vars['symm.gpsPosition.longitude_f'] = dmg_to_float(float(long_deg), float(long_min), float(long_sec), long_sign)
+            p_symm_vars['symm.gpsPosition.latitude_fu'] = dmg_to_float(float(lat_deg), float(lat_min), float(lat_sec), lat_sign) - lat_fudge
+            p_symm_vars['symm.gpsPosition.longitude_fu'] = dmg_to_float(float(long_deg), float(long_min), float(long_sec), long_sign) + long_fudge
             continue
         #symm.gpsHealth(1.3.6.1.4.1.9070.1.2.3.1.5.1.3.3.0) = Receiver Health: 8
         if key == 'symm.gpsHealth':
@@ -216,28 +221,23 @@ def parse_symm_vars(symm_vars):
         #symm.gpsSatlist(1.3.6.1.4.1.9070.1.2.3.1.5.1.3.4.0) = 9,20,-161,C,32,-160,C,15,-160,C,21,-158,C,10,-154,C,24,-167,C,27,-159,C,8,-161,C,18,-160,C
         if key == 'symm.gpsSatlist':
             p_values = symm_vars[key].split(',')
-            satellites = int(p_values[0])
-            satellites_C = 0
+            satellites_T = int(p_values[0])
+            satellites_TC = 0
             #print("satellites = " + str(satellites))
-            p_symm_vars['symm.gpsSatList.satellite_C'] = { }
-            p_symm_vars['symm.gpsSatList.satellite_TC'] = { }
-            for i in range(0, satellites - 1):
+            # T = Tracking
+            # TC = Tracking and used for time solution
+            for i in range(0, satellites_T - 1):
                 sat_number = int(p_values[1 + (i * 3) + 0])
                 sat_dbW = int(p_values[1 + (i * 3) + 1])
                 sat_status = p_values[1 + (i * 3) + 2]
                 #print("sat " + str(sat_number) + ": dbW=" + str(sat_dbW) + ", status=" + sat_status)
+                sat_name = "SVN_" + str(sat_number)
                 if sat_status == 'C':
-                    p_symm_vars['symm.gpsSatList.satellite_C'][sat_number] = { }
-                    p_symm_vars['symm.gpsSatList.satellite_C'][sat_number]['sat_svn'] = "SV_" + str(sat_number)
-                    p_symm_vars['symm.gpsSatList.satellite_C'][sat_number]['sat_dbW'] = sat_dbW
-                    p_symm_vars['symm.gpsSatList.satellite_C'][sat_number]['sat_status'] = sat_status
-                    satellites_C = satellites_C + 1
-                p_symm_vars['symm.gpsSatList.satellite_TC'][sat_number] = { }
-                p_symm_vars['symm.gpsSatList.satellite_TC'][sat_number]['sat_svn'] = "SV_" + str(sat_number)
-                p_symm_vars['symm.gpsSatList.satellite_TC'][sat_number]['sat_dbW'] = sat_dbW
-                p_symm_vars['symm.gpsSatList.satellite_TC'][sat_number]['sat_status'] = sat_status
-            p_symm_vars['symm.gpsSatList.satellites_C'] = satellites_C
-            p_symm_vars['symm.gpsSatList.satellites_TC'] = satellites
+                    p_symm_vars['symm.gpsSatList.solution.' + sat_name] = sat_dbW
+                    satellites_TC = satellites_TC + 1
+                p_symm_vars['symm.gpsSatList.tracking.' + sat_name] = sat_dbW
+            p_symm_vars['symm.gpsSatList.N_solution'] = satellites_TC # tracking / solution
+            p_symm_vars['symm.gpsSatList.N_tracking'] = satellites_T # tracking
         #symm.gpsMode(1.3.6.1.4.1.9070.1.2.3.1.5.1.3.5.0) = Receiver Mode: Survey
         if key == 'symm.gpsMode':
             p_symm_vars[key] = symm_vars[key].replace('Receiver Mode: ', '')

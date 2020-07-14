@@ -25,18 +25,18 @@ def setup_db(host, port):
 def insert_db(db, metrics, metrics_stamp):
     print("insert_db: db=" + str(db) + ", metrics=" + str(metrics) + ", metrics_stamp=" + metrics_stamp)
     json_e = { }
-    json_e['measurement'] = 'symm300_rubidium_ptp' # make a param
+    json_e['measurement'] = 'symm300_rubidium_ptp.0' # make a param
     json_e['tags'] = { }
-    json_e['tags']['host'] = "masterclock-h1" # make a param
+    json_e['tags']['host'] = "masterclock-h1.0" # make a param
     # json_e['time'] = time.strftime("%Y-%m-%dT%H:%M:%SZ", time.gmtime())
     json_e['time'] = metrics_stamp
     json_e['fields'] = { }
-    for metric in metrics:
+    for metric in metrics.keys():
         value = metrics[metric]
         print("insert_db: " + metric + ": " + str(value))
-        #json_e['fields'][metric] = value
+        json_e['fields'][metric] = value
         #json_body = [ json_e ]
     json_body = [ json_e ]
-
-    #print('JSON_BODY = ' + str(json_body))
+    print('JSON_BODY = ' + str(json_body))
     db.write_points(json_body)
+    print('db.write_points() done')
