@@ -14,8 +14,8 @@ oid_num = "1.3.6.1.4.1.9070"
 metrics_server = "129.213.255.36"
 metrics_port = 58086
 interval_s = 21
-lat_fudge = -120
-long_fudge = +47.30
+lat_fudge = 47.70
+long_fudge = -122
 
 #
 # full list of MIB variables we get -- we don't use all of them
@@ -212,11 +212,14 @@ def parse_symm_vars(symm_vars):
             p_symm_vars['symm.gpsPosition.latitude_f'] = dmg_to_float(float(lat_deg), float(lat_min), float(lat_sec), lat_sign)
             p_symm_vars['symm.gpsPosition.longitude_f'] = dmg_to_float(float(long_deg), float(long_min), float(long_sec), long_sign)
             p_symm_vars['symm.gpsPosition.latitude_fu'] = dmg_to_float(float(lat_deg), float(lat_min), float(lat_sec), lat_sign) - lat_fudge
-            p_symm_vars['symm.gpsPosition.longitude_fu'] = dmg_to_float(float(long_deg), float(long_min), float(long_sec), long_sign) + long_fudge
+            p_symm_vars['symm.gpsPosition.longitude_fu'] = dmg_to_float(float(long_deg), float(long_min), float(long_sec), long_sign) - long_fudge
             continue
         #symm.gpsHealth(1.3.6.1.4.1.9070.1.2.3.1.5.1.3.3.0) = Receiver Health: 8
         if key == 'symm.gpsHealth':
-            p_symm_vars[key] = int(symm_vars[key].replace('Receiver Health: ', ''))
+            try:
+                p_symm_vars[key] = int(symm_vars[key].replace('Receiver Health: ', ''))
+            except:
+                p_symm_vars[key] = -1
             continue
         #symm.gpsSatlist(1.3.6.1.4.1.9070.1.2.3.1.5.1.3.4.0) = 9,20,-161,C,32,-160,C,15,-160,C,21,-158,C,10,-154,C,24,-167,C,27,-159,C,8,-161,C,18,-160,C
         if key == 'symm.gpsSatlist':
@@ -226,11 +229,12 @@ def parse_symm_vars(symm_vars):
             #print("satellites = " + str(satellites))
             # T = Tracking
             # TC = Tracking and used for time solution
-            for i in range(0, satellites_T - 1):
+            for i in range(0, satellites_T):
                 sat_number = int(p_values[1 + (i * 3) + 0])
                 sat_dbW = int(p_values[1 + (i * 3) + 1])
                 sat_status = p_values[1 + (i * 3) + 2]
                 #print("sat " + str(sat_number) + ": dbW=" + str(sat_dbW) + ", status=" + sat_status)
+                # this is PRN, not SVN
                 sat_name = "SVN_" + str(sat_number)
                 if sat_status == 'C':
                     p_symm_vars['symm.gpsSatList.solution.' + sat_name] = sat_dbW
@@ -241,6 +245,13 @@ def parse_symm_vars(symm_vars):
         #symm.gpsMode(1.3.6.1.4.1.9070.1.2.3.1.5.1.3.5.0) = Receiver Mode: Survey
         if key == 'symm.gpsMode':
             p_symm_vars[key] = symm_vars[key].replace('Receiver Mode: ', '')
+            # p_symm_vars[key] = 0
+            # if s == 'Dynamic':
+            #     p_symm_vars[key] = 1
+            # if s == 'Survey':
+            #     p_symm_vars[key] = 2
+            # if s == 'Hold':
+            #     p_symm_vars[key] = 3
             continue
         #symm.etcAlarmString(1.3.6.1.4.1.9070.1.2.3.1.5.1.6.6.0) = 
         if key == 'symm.etcAlarmString':
